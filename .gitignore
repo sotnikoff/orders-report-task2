@@ -1,0 +1,5 @@
+/ordersreport
+/ordersreport.exe
+*.test
+.idea/
+.vscode/

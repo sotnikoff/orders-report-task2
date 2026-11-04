@@ -1,0 +1,12 @@
+id,customer,category,amount,status,created_at
+1,Анна,books,10.00,paid,2026-01-01
+0,Анна,books,10.00,paid,2026-01-01
+ 2 ,Борис,toys,5,pending,2026-01-02
+3,Виктор,books,abc,paid,2026-01-03
+3,Виктор,books,7.5,paid,2026-01-03
+4,Галина,toys,0.00,paid,2026-01-04
+5,Галина,toys,5.00,PAID,2026-01-04
+6,Дмитрий,books,92233720368547759,paid,2026-01-05
+7,Елена,books,0.01,cancelled,2026-01-05
+8,Елена,books,5.,paid,2026-01-05
+2,Борис,toys,5,pending,2026-01-02
