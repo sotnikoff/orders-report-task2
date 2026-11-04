@@ -60,14 +60,14 @@ func processAmount(amount string, lineIdx int) (int64, error) {
 
 	if m == nil {
 		// error bad amount regexp failed
-		return 0, fmt.Errorf("строка %d: число Amount не соответствует формату", lineIdx+1)
+		return 0, fmt.Errorf("строка %d: неверный формат суммы", lineIdx+1)
 	}
 
 	// whole amount
 	wholeInt, err = strconv.ParseInt(m[1], 10, 64)
 	if err != nil {
 		// error parsing int
-		return 0, fmt.Errorf("строка %d: Ошибка преобразования Amount к числу", lineIdx+1)
+		return 0, fmt.Errorf("строка %d: Ошибка преобразования суммы", lineIdx+1)
 	}
 
 	amountInt = wholeInt
@@ -76,7 +76,7 @@ func processAmount(amount string, lineIdx int) (int64, error) {
 		fractionalPartInt, err = strconv.ParseInt(m[2], 10, 64)
 		if err != nil {
 			// error parsing fractional part
-			return 0, fmt.Errorf("строка %d: Ощибка преобразования дробной части Amount к числу", lineIdx+1)
+			return 0, fmt.Errorf("строка %d: Ошибка преобразования дробной части суммы", lineIdx+1)
 		}
 		if len(m[2]) == 1 {
 			fractionalPartInt = fractionalPartInt * 10
@@ -123,21 +123,21 @@ func processLine(stringLine string, lineIdx int, seenIds map[int]bool) (Line, er
 	}
 
 	if len(customer) == 0 {
-		return Line{}, fmt.Errorf("строка %d: Customer - пустое значение", lineIdx+1)
+		return Line{}, fmt.Errorf("строка %d: клиент - пустое значение", lineIdx+1)
 	}
 
 	if len(category) == 0 {
-		return Line{}, fmt.Errorf("строка %d: Category - пустое значение", lineIdx+1)
+		return Line{}, fmt.Errorf("строка %d: категория - пустое значение", lineIdx+1)
 	}
 	if len(status) == 0 {
-		return Line{}, fmt.Errorf("строка %d: Status - пустое значение", lineIdx+1)
+		return Line{}, fmt.Errorf("строка %d: статус - пустое значение", lineIdx+1)
 	}
 
 	switch status {
 	case "paid", "pending", "cancelled":
 		// ok
 	default:
-		return Line{}, fmt.Errorf("строка %d: Неизвестный статус", lineIdx+1)
+		return Line{}, fmt.Errorf("строка %d: неизвестный статус", lineIdx+1)
 	}
 
 	amountInt, err = processAmount(amount, lineIdx)
@@ -146,7 +146,7 @@ func processLine(stringLine string, lineIdx int, seenIds map[int]bool) (Line, er
 	}
 
 	if amountInt <= 0 {
-		return Line{}, fmt.Errorf("строка %d: Amount должен быть строго больше нуля", lineIdx+1)
+		return Line{}, fmt.Errorf("строка %d: Сумма должна быть строго больше нуля", lineIdx+1)
 	}
 
 	parsedCreatedAt, err = processCreatedAt(createdAt, lineIdx)
@@ -168,7 +168,7 @@ func processLine(stringLine string, lineIdx int, seenIds map[int]bool) (Line, er
 }
 
 func run() int {
-	filepathPtr := flag.String("file", "", "Путь к CSV файлу (обязательный параметр)")
+	filepathPtr := flag.String("file", "", "Ошибка: Путь к CSV файлу обязателен")
 	flag.Parse()
 	filepath := *filepathPtr
 
@@ -180,7 +180,7 @@ func run() int {
 	// Open file
 	file, err := os.Open(filepath)
 	if err != nil {
-		fmt.Fprintln(os.Stderr, "Unable to read input file "+filepath, err)
+		fmt.Fprintln(os.Stderr, "Ошибка: не удалось открыть файл "+filepath, err)
 		return 1
 	}
 	defer file.Close()
