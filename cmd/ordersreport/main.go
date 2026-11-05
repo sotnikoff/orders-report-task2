@@ -2,8 +2,10 @@ package main
 
 import (
 	"bufio"
+	"errors"
 	"flag"
 	"fmt"
+	"math"
 	"os"
 	"regexp"
 	"strconv"
@@ -25,6 +27,37 @@ type Line struct {
 	LineNumber int
 }
 
+var (
+	ErrWrongNumberOfColumns    = errors.New("число колонок не равно 6")
+	ErrInvalidDate             = errors.New("ошибка разбора времени")
+	ErrInvalidAmountFormat     = errors.New("неверный формат суммы")
+	ErrAmountParsing           = errors.New("ошибка преобразования суммы")
+	ErrAmountTooLarge          = errors.New("сумма превышает максимально допустимое значение")
+	ErrFractionalAmountParsing = errors.New("ошибка преобразования дробной части суммы")
+	ErrInvalidID               = errors.New("ошибка разбора ID")
+	ErrNonPositiveID           = errors.New("ID должен быть больше 0")
+	ErrDuplicateID             = errors.New("ID повторяющийся")
+	ErrEmptyCustomer           = errors.New("клиент - пустое значение")
+	ErrEmptyCategory           = errors.New("категория - пустое значение")
+	ErrEmptyStatus             = errors.New("статус - пустое значение")
+	ErrUnknownStatus           = errors.New("неизвестный статус")
+	ErrNonPositiveAmount       = errors.New("сумма должна быть строго больше нуля")
+)
+
+type ValidationError struct {
+	Err        error
+	LineNumber int
+	Field      string
+}
+
+func (e *ValidationError) Error() string {
+	return fmt.Sprintf("строка %d, поле %s: %v", e.LineNumber, e.Field, e.Err)
+}
+
+func (e *ValidationError) Unwrap() error {
+	return e.Err
+}
+
 func printReport(acceptedLinesCount int, rejectedLinesCount int) {
 	totalLines := acceptedLinesCount + rejectedLinesCount
 	fmt.Fprintf(os.Stdout, "Всего строк данных: %d\n", totalLines)
@@ -41,7 +74,7 @@ func printErrors(rejectedLinesErrorMessages []error) {
 func processCreatedAt(createdAt string, lineIdx int) (time.Time, error) {
 	parsedTime, err := time.Parse("2006-01-02", createdAt)
 	if err != nil {
-		return time.Time{}, fmt.Errorf("строка %d: ошибка разбора времени", lineIdx+1)
+		return time.Time{}, &ValidationError{Err: ErrInvalidDate, LineNumber: lineIdx + 1, Field: "CreatedAt"}
 	}
 	return parsedTime, nil
 }
@@ -60,14 +93,14 @@ func processAmount(amount string, lineIdx int) (int64, error) {
 
 	if m == nil {
 		// error bad amount regexp failed
-		return 0, fmt.Errorf("строка %d: неверный формат суммы", lineIdx+1)
+		return 0, &ValidationError{Err: ErrInvalidAmountFormat, LineNumber: lineIdx + 1, Field: "Amount"}
 	}
 
 	// whole amount
 	wholeInt, err = strconv.ParseInt(m[1], 10, 64)
 	if err != nil {
 		// error parsing int
-		return 0, fmt.Errorf("строка %d: Ошибка преобразования суммы", lineIdx+1)
+		return 0, &ValidationError{Err: ErrAmountParsing, LineNumber: lineIdx + 1, Field: "Amount"}
 	}
 
 	amountInt = wholeInt
@@ -76,15 +109,16 @@ func processAmount(amount string, lineIdx int) (int64, error) {
 		fractionalPartInt, err = strconv.ParseInt(m[2], 10, 64)
 		if err != nil {
 			// error parsing fractional part
-			return 0, fmt.Errorf("строка %d: Ошибка преобразования дробной части суммы", lineIdx+1)
+			return 0, &ValidationError{Err: ErrFractionalAmountParsing, LineNumber: lineIdx + 1, Field: "Amount"}
 		}
 		if len(m[2]) == 1 {
 			fractionalPartInt = fractionalPartInt * 10
 		}
-		amountInt = (amountInt * 100) + fractionalPartInt
-	} else {
-		amountInt = amountInt * 100
 	}
+	if wholeInt > (math.MaxInt64-fractionalPartInt)/100 {
+		return 0, &ValidationError{Err: ErrAmountTooLarge, LineNumber: lineIdx + 1, Field: "Amount"}
+	}
+	amountInt = (amountInt * 100) + fractionalPartInt
 	return amountInt, nil
 }
 
@@ -92,10 +126,10 @@ func processLine(stringLine string, lineIdx int, seenIds map[int]bool) (Line, er
 	data := strings.Split(stringLine, ",")
 	if len(data) != 6 {
 		// .... error != 6
-		return Line{}, fmt.Errorf("строка %d: Число колонок не равно 6", lineIdx+1)
+		return Line{}, &ValidationError{Err: ErrWrongNumberOfColumns, LineNumber: lineIdx + 1, Field: "Columns"}
 	}
 
-	id := data[0]
+	id := strings.TrimSpace(data[0])
 	customer := strings.TrimSpace(data[1])
 	category := strings.TrimSpace(data[2])
 	amount := strings.TrimSpace(data[3])
@@ -111,33 +145,33 @@ func processLine(stringLine string, lineIdx int, seenIds map[int]bool) (Line, er
 
 	idInt, err = strconv.Atoi(id)
 	if err != nil {
-		return Line{}, fmt.Errorf("строка %d: ошибка разбора ID", lineIdx+1)
+		return Line{}, &ValidationError{Err: ErrInvalidID, LineNumber: lineIdx + 1, Field: "ID"}
 	}
 
-	if idInt < 0 {
-		return Line{}, fmt.Errorf("строка %d: ID отрицательный", lineIdx+1)
+	if idInt <= 0 {
+		return Line{}, &ValidationError{Err: ErrNonPositiveID, LineNumber: lineIdx + 1, Field: "ID"}
 	}
 
 	if seenIds[idInt] {
-		return Line{}, fmt.Errorf("строка %d: ID повторяющийся", lineIdx+1)
+		return Line{}, &ValidationError{Err: ErrDuplicateID, LineNumber: lineIdx + 1, Field: "ID"}
 	}
 
 	if len(customer) == 0 {
-		return Line{}, fmt.Errorf("строка %d: клиент - пустое значение", lineIdx+1)
+		return Line{}, &ValidationError{Err: ErrEmptyCustomer, LineNumber: lineIdx + 1, Field: "Customer"}
 	}
 
 	if len(category) == 0 {
-		return Line{}, fmt.Errorf("строка %d: категория - пустое значение", lineIdx+1)
+		return Line{}, &ValidationError{Err: ErrEmptyCategory, LineNumber: lineIdx + 1, Field: "Category"}
 	}
 	if len(status) == 0 {
-		return Line{}, fmt.Errorf("строка %d: статус - пустое значение", lineIdx+1)
+		return Line{}, &ValidationError{Err: ErrEmptyStatus, LineNumber: lineIdx + 1, Field: "Status"}
 	}
 
 	switch status {
 	case "paid", "pending", "cancelled":
 		// ok
 	default:
-		return Line{}, fmt.Errorf("строка %d: неизвестный статус", lineIdx+1)
+		return Line{}, &ValidationError{Err: ErrUnknownStatus, LineNumber: lineIdx + 1, Field: "Status"}
 	}
 
 	amountInt, err = processAmount(amount, lineIdx)
@@ -146,7 +180,7 @@ func processLine(stringLine string, lineIdx int, seenIds map[int]bool) (Line, er
 	}
 
 	if amountInt <= 0 {
-		return Line{}, fmt.Errorf("строка %d: Сумма должна быть строго больше нуля", lineIdx+1)
+		return Line{}, &ValidationError{Err: ErrNonPositiveAmount, LineNumber: lineIdx + 1, Field: "Amount"}
 	}
 
 	parsedCreatedAt, err = processCreatedAt(createdAt, lineIdx)
