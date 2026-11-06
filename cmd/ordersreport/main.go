@@ -13,19 +13,7 @@ import (
 	"time"
 )
 
-type Order struct {
-	ID        int
-	Customer  string
-	Category  string
-	Amount    int64
-	Status    string
-	CreatedAt time.Time
-}
-
-type Line struct {
-	Order
-	LineNumber int
-}
+var re = regexp.MustCompile(`\A(\d+)(?:\.(\d{1,2}))?\z`)
 
 var (
 	ErrWrongNumberOfColumns    = errors.New("число колонок не равно 6")
@@ -43,6 +31,100 @@ var (
 	ErrUnknownStatus           = errors.New("неизвестный статус")
 	ErrNonPositiveAmount       = errors.New("сумма должна быть строго больше нуля")
 )
+
+type Order struct {
+	ID        int
+	Customer  string
+	Category  string
+	Amount    int64
+	Status    string
+	CreatedAt time.Time
+}
+
+type Line struct {
+	Order
+	LineNumber int
+}
+
+type Loader interface {
+	Load() ([]string, error)
+}
+
+func load(l Loader) ([]string, error) {
+	return l.Load()
+}
+
+type FileLoader struct{}
+type MemoryLoader struct{}
+
+func (FileLoader) Load() ([]string, error) {
+	var lines []string
+	filepathPtr := flag.String("file", "", "Ошибка: Путь к CSV файлу обязателен")
+	flag.Parse()
+	filepath := *filepathPtr
+
+	if filepath == "" {
+		fmt.Fprintln(os.Stderr, "Ошибка: не указан обязательный флаг -file")
+		return lines, errors.New("")
+	}
+
+	// Open file
+	file, err := os.Open(filepath)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "Ошибка: не удалось открыть файл "+filepath, err)
+		return lines, errors.New("")
+	}
+	defer file.Close()
+
+	scanner := bufio.NewScanner(file)
+	for scanner.Scan() {
+		line := scanner.Text()
+
+		lines = append(lines, line)
+	}
+	err = scanner.Err()
+	if err != nil {
+		return lines, errors.New("")
+	}
+	return lines, nil
+}
+
+func (MemoryLoader) Load() ([]string, error) {
+	arr := make([]string, 0, 30)
+	arr = append(arr,
+		"id,customer,category,amount,status,created_at",
+		"1001,Анна,books,1250.50,paid,2026-09-01",
+		"1002,Борис,electronics,15990.00,paid,2026-09-01",
+		"1003,Анна,books,430,paid,2026-09-02",
+		"1004,Виктор,toys,899.90,pending,2026-09-02",
+		"1005,Галина,books,1200.00,cancelled,2026-09-03",
+		"1006,Борис,toys,2100.00,paid,2026-09-03",
+		"1007,Дмитрий,electronics,7350.25,paid,2026-09-04",
+		"1008, Галина , garden ,560.00,paid,2026-09-04",
+		"1009,Анна,garden,abc,paid,2026-09-05",
+		"1010,Елена,books,-50.00,paid,2026-09-05",
+		"1011,Виктор,toys,310.5,paid,2026-09-06",
+		"1001,Борис,books,99.00,paid,2026-09-06",
+		"1012,Дмитрий,garden,1800.00,paid,2026-02-30",
+		"1013,,books,100.00,paid,2026-09-07",
+		"1014,Елена,toys,12.345,paid,2026-09-07",
+		"1015,Елена,electronics,3200.00,refunded,2026-09-08",
+		"1016,Галина,books,0,paid,2026-09-08",
+		"1017,Елена,garden,640.00,paid,2026-09-08",
+		"1018,Борис,electronics,2500.00,pending,2026-09-09",
+		"1019,Дмитрий,books,1000.00,paid,2026-09-09",
+		"1020,Анна,toys,215.75,paid,2026-09-10,extra",
+		"1021,Виктор,books,75.00,paid",
+		"x22,Галина,garden,100.00,paid,2026-09-10",
+		"1023,Елена,books,1560.00,paid,2026-09-11",
+		"1024,Анна,garden,1000.00,cancelled,2026-09-11",
+		"1025,Борис,books,1000.00,paid,2026-09-12",
+		"1026,Анна,garden,519.50,paid,2026-09-12",
+		"1027,Ирина,music,19.99,paid,2026-09-13",
+		"1028,Ирина,music,4.35,paid,2026-09-13",
+	)
+	return arr, nil
+}
 
 type ValidationError struct {
 	Err        error
@@ -78,8 +160,6 @@ func processCreatedAt(createdAt string, lineIdx int) (time.Time, error) {
 	}
 	return parsedTime, nil
 }
-
-var re = regexp.MustCompile(`\A(\d+)(?:\.(\d{1,2}))?\z`)
 
 func processAmount(amount string, lineIdx int) (int64, error) {
 	var (
@@ -202,48 +282,27 @@ func processLine(stringLine string, lineIdx int, seenIds map[int]bool) (Line, er
 }
 
 func run() int {
-	filepathPtr := flag.String("file", "", "Ошибка: Путь к CSV файлу обязателен")
-	flag.Parse()
-	filepath := *filepathPtr
 
-	if filepath == "" {
-		fmt.Fprintln(os.Stderr, "Ошибка: не указан обязательный флаг -file")
-		return 2
-	}
-
-	// Open file
-	file, err := os.Open(filepath)
-	if err != nil {
-		fmt.Fprintln(os.Stderr, "Ошибка: не удалось открыть файл "+filepath, err)
-		return 1
-	}
-	defer file.Close()
-
-	var lines []string
-	var acceptedLines []Line
-	var rejectedLinesErrorMessages []error
-
-	scanner := bufio.NewScanner(file)
-	for scanner.Scan() {
-		line := scanner.Text()
-
-		lines = append(lines, line)
-	}
-
-	err = scanner.Err()
-	if err != nil {
-		return 1
-	}
-
+	var (
+		lines                      []string
+		err                        error
+		acceptedLines              []Line
+		rejectedLinesErrorMessages []error
+	)
 	seenIds := make(map[int]bool)
+
+	lines, err = load(MemoryLoader{})
+	if err != nil {
+		return 1
+	}
 
 	for idx, rawLine := range lines {
 		if idx == 0 {
 			continue
 		}
-		line, err := processLine(rawLine, idx, seenIds)
-		if err != nil {
-			rejectedLinesErrorMessages = append(rejectedLinesErrorMessages, err)
+		line, errLine := processLine(rawLine, idx, seenIds)
+		if errLine != nil {
+			rejectedLinesErrorMessages = append(rejectedLinesErrorMessages, errLine)
 			continue
 		}
 		acceptedLines = append(acceptedLines, line)
