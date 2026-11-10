@@ -34,6 +34,10 @@ var (
 	ErrMissingCmdFileArgument  = errors.New("отсутствует флаг -file")
 )
 
+type AppConfig struct {
+	Filepath string
+}
+
 type Order struct {
 	ID        int
 	Customer  string
@@ -77,8 +81,7 @@ func (f FileLoader) Load() ([]string, error) {
 	// На уроке мы с тобой обсуждали, что лучше никогда не игнорировать ошибки. Делать это можно с полным понимаем того, почему и зачем мы так делаем
 	// Давай тут проверять ошибку у file.Close и если есть ошибка, то выводить ее в консоль с помощью log.Print(err). Само логирование еще позже обсудим
 	defer func() {
-		err := file.Close()
-		if err != nil {
+		if err := file.Close(); err != nil {
 			fmt.Fprintln(os.Stderr, "неудачное закрытие файла "+f.filepath, err)
 		}
 	}()
@@ -147,12 +150,10 @@ func (e *ValidationError) Unwrap() error {
 	return e.Err
 }
 
-type Status struct {
-	Status string
-}
+type Status string
 
 func (s Status) IsValid() bool {
-	switch s.Status {
+	switch s {
 	case "paid", "pending", "cancelled":
 		return true
 	default:
@@ -273,7 +274,7 @@ func processLine(stringLine string, lineIdx int, seenIds map[int]bool) (Line, er
 	//
 	// Попробуй сам вынести данную проверку в метод и заменить им код ниже. Для этого нам нужно будет на входе твоей программы
 	// присвоить строковый статус к типу Status
-	statusStruct := Status{Status: status}
+	statusStruct := Status(status)
 	if !statusStruct.IsValid() {
 		return Line{}, &ValidationError{Err: ErrUnknownStatus, LineNumber: lineIdx + 1, Field: "Status"}
 	}
@@ -306,7 +307,7 @@ func processLine(stringLine string, lineIdx int, seenIds map[int]bool) (Line, er
 }
 
 // Данная функция должна возвращать ошибку, а какой код ошибки вызывать пусть решает main
-func run() error {
+func run(config AppConfig) error {
 	// в go нет необходимости все переменные нужные для работы функции выносить вверх. Объявляй их по мере необходимости
 	// Так же переменные через var имеет смысл объявлять когда явно нужно дефолтное значение, или когда мы знаем что значение переменной может поменять внутри блока if/for/switch
 
@@ -314,17 +315,10 @@ func run() error {
 	// Давай создадим функцию
 	// func NewFileLoader(filePath string) (*FileLoader) {}
 	// которая будет создавать FileLoader и внутри функции сохранять путь к файлу внутри поля
-	filepathPtr := flag.String("file", "", "Путь к CSV файлу")
-	flag.Parse()
-	filepath := *filepathPtr
-
-	if filepath == "" {
-		return fmt.Errorf("run: %w", ErrMissingCmdFileArgument)
-	}
 
 	seenIds := make(map[int]bool)
 
-	fileLoader := NewFileLoader(filepath)
+	fileLoader := NewFileLoader(config.Filepath)
 	lines, err := load(fileLoader)
 	if err != nil {
 		return fmt.Errorf("run: %w", err)
@@ -352,7 +346,17 @@ func run() error {
 }
 
 func main() {
-	err := run() // возвращает ошибку и в main ее обрабатываем. В зависимости от ошибки вызываем интересующий нас exit err
+	filepathPtr := flag.String("file", "", "Путь к CSV файлу")
+	flag.Parse()
+	filepath := *filepathPtr
+
+	if filepath == "" {
+		fmt.Fprintln(os.Stderr, ErrMissingCmdFileArgument)
+	}
+
+	config := AppConfig{Filepath: filepath}
+
+	err := run(config) // возвращает ошибку и в main ее обрабатываем. В зависимости от ошибки вызываем интересующий нас exit err
 
 	if err == nil {
 		return
