@@ -30,6 +30,8 @@ var (
 	ErrEmptyStatus             = errors.New("статус - пустое значение")
 	ErrUnknownStatus           = errors.New("неизвестный статус")
 	ErrNonPositiveAmount       = errors.New("сумма должна быть строго больше нуля")
+	ErrEmptyFilepath           = errors.New("путь к файлу пуст")
+	ErrMissingCmdFileArgument  = errors.New("отсутствует флаг -file")
 )
 
 type Order struct {
@@ -37,7 +39,7 @@ type Order struct {
 	Customer  string
 	Category  string
 	Amount    int64
-	Status    string
+	Status    string // Тут тоже давай использовать наш новый тип Status
 	CreatedAt time.Time
 }
 
@@ -54,27 +56,32 @@ func load(l Loader) ([]string, error) {
 	return l.Load()
 }
 
-type FileLoader struct{}
+type FileLoader struct {
+	filepath string
+}
+
 type MemoryLoader struct{}
 
-func (FileLoader) Load() ([]string, error) {
-	var lines []string
-	filepathPtr := flag.String("file", "", "Ошибка: Путь к CSV файлу обязателен")
-	flag.Parse()
-	filepath := *filepathPtr
+func NewFileLoader(filePath string) *FileLoader {
+	return &FileLoader{filepath: filePath}
+}
 
-	if filepath == "" {
-		fmt.Fprintln(os.Stderr, "Ошибка: не указан обязательный флаг -file")
-		return lines, errors.New("")
-	}
+func (f FileLoader) Load() ([]string, error) {
+	var lines []string
 
 	// Open file
-	file, err := os.Open(filepath)
+	file, err := os.Open(f.filepath)
 	if err != nil {
-		fmt.Fprintln(os.Stderr, "Ошибка: не удалось открыть файл "+filepath, err)
-		return lines, errors.New("")
+		return nil, fmt.Errorf("не удалось открыть файл %q: %w", f.filepath, err)
 	}
-	defer file.Close()
+	// На уроке мы с тобой обсуждали, что лучше никогда не игнорировать ошибки. Делать это можно с полным понимаем того, почему и зачем мы так делаем
+	// Давай тут проверять ошибку у file.Close и если есть ошибка, то выводить ее в консоль с помощью log.Print(err). Само логирование еще позже обсудим
+	defer func() {
+		err := file.Close()
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "неудачное закрытие файла "+f.filepath, err)
+		}
+	}()
 
 	scanner := bufio.NewScanner(file)
 	for scanner.Scan() {
@@ -140,11 +147,24 @@ func (e *ValidationError) Unwrap() error {
 	return e.Err
 }
 
+type Status struct {
+	Status string
+}
+
+func (s Status) IsValid() bool {
+	switch s.Status {
+	case "paid", "pending", "cancelled":
+		return true
+	default:
+		return false
+	}
+}
+
 func printReport(acceptedLinesCount int, rejectedLinesCount int) {
 	totalLines := acceptedLinesCount + rejectedLinesCount
-	fmt.Fprintf(os.Stdout, "Всего строк данных: %d\n", totalLines)
-	fmt.Fprintf(os.Stdout, "Принято: %d\n", acceptedLinesCount)
-	fmt.Fprintf(os.Stdout, "Отклонено: %d\n", rejectedLinesCount)
+	fmt.Printf("Всего строк данных: %d\n", totalLines) // Если нам нужно вывести данные в stdout, то лучше использовать fmt.Printf. Суть таже самая, только он сам под капотом пишет в stdout
+	fmt.Printf("Принято: %d\n", acceptedLinesCount)
+	fmt.Printf("Отклонено: %d\n", rejectedLinesCount)
 }
 
 func printErrors(rejectedLinesErrorMessages []error) {
@@ -215,7 +235,6 @@ func processLine(stringLine string, lineIdx int, seenIds map[int]bool) (Line, er
 	amount := strings.TrimSpace(data[3])
 	status := strings.TrimSpace(data[4])
 	createdAt := strings.TrimSpace(data[5])
-	parsedCreatedAt := time.Time{}
 
 	var (
 		err       error
@@ -247,10 +266,15 @@ func processLine(stringLine string, lineIdx int, seenIds map[int]bool) (Line, er
 		return Line{}, &ValidationError{Err: ErrEmptyStatus, LineNumber: lineIdx + 1, Field: "Status"}
 	}
 
-	switch status {
-	case "paid", "pending", "cancelled":
-		// ok
-	default:
+	// На уроке мы с тобой обсуждали, как нам создать свой тип Status и вынести данную проверку туда
+	// type Status string
+	//
+	// func (s Status) Valid() bool {...}
+	//
+	// Попробуй сам вынести данную проверку в метод и заменить им код ниже. Для этого нам нужно будет на входе твоей программы
+	// присвоить строковый статус к типу Status
+	statusStruct := Status{Status: status}
+	if !statusStruct.IsValid() {
 		return Line{}, &ValidationError{Err: ErrUnknownStatus, LineNumber: lineIdx + 1, Field: "Status"}
 	}
 
@@ -263,7 +287,7 @@ func processLine(stringLine string, lineIdx int, seenIds map[int]bool) (Line, er
 		return Line{}, &ValidationError{Err: ErrNonPositiveAmount, LineNumber: lineIdx + 1, Field: "Amount"}
 	}
 
-	parsedCreatedAt, err = processCreatedAt(createdAt, lineIdx)
+	parsedCreatedAt, err := processCreatedAt(createdAt, lineIdx)
 	if err != nil {
 		return Line{}, err
 	}
@@ -275,44 +299,73 @@ func processLine(stringLine string, lineIdx int, seenIds map[int]bool) (Line, er
 		Customer:  customer,
 		Category:  category,
 		Status:    status,
-		Amount:    int64(amountInt),
+		Amount:    amountInt, // тут приводить к int64 нет смысла, тк переменная уже int64
 		CreatedAt: parsedCreatedAt}
 
 	return Line{Order: order, LineNumber: lineIdx + 1}, nil
 }
 
-func run() int {
+// Данная функция должна возвращать ошибку, а какой код ошибки вызывать пусть решает main
+func run() error {
+	// в go нет необходимости все переменные нужные для работы функции выносить вверх. Объявляй их по мере необходимости
+	// Так же переменные через var имеет смысл объявлять когда явно нужно дефолтное значение, или когда мы знаем что значение переменной может поменять внутри блока if/for/switch
+
+	// Теперь у нас есть своя структура FileLoader и мы можем хранить путь к файлу как поле структуры
+	// Давай создадим функцию
+	// func NewFileLoader(filePath string) (*FileLoader) {}
+	// которая будет создавать FileLoader и внутри функции сохранять путь к файлу внутри поля
+	filepathPtr := flag.String("file", "", "Путь к CSV файлу")
+	flag.Parse()
+	filepath := *filepathPtr
+
+	if filepath == "" {
+		return fmt.Errorf("run: %w", ErrMissingCmdFileArgument)
+	}
+
+	seenIds := make(map[int]bool)
+
+	fileLoader := NewFileLoader(filepath)
+	lines, err := load(fileLoader)
+	if err != nil {
+		return fmt.Errorf("run: %w", err)
+	}
 
 	var (
-		lines                      []string
-		err                        error
 		acceptedLines              []Line
 		rejectedLinesErrorMessages []error
 	)
-	seenIds := make(map[int]bool)
-
-	lines, err = load(MemoryLoader{})
-	if err != nil {
-		return 1
-	}
 
 	for idx, rawLine := range lines {
 		if idx == 0 {
 			continue
 		}
-		line, errLine := processLine(rawLine, idx, seenIds)
-		if errLine != nil {
-			rejectedLinesErrorMessages = append(rejectedLinesErrorMessages, errLine)
+		line, err := processLine(rawLine, idx, seenIds) // тут нет необходимости в новой переменной err
+		if err != nil {
+			rejectedLinesErrorMessages = append(rejectedLinesErrorMessages, err)
 			continue
 		}
 		acceptedLines = append(acceptedLines, line)
 	}
 	printReport(len(acceptedLines), len(rejectedLinesErrorMessages))
 	printErrors(rejectedLinesErrorMessages)
-	return 0
+	return nil
 }
 
 func main() {
-	code := run()
-	os.Exit(code)
+	err := run() // возвращает ошибку и в main ее обрабатываем. В зависимости от ошибки вызываем интересующий нас exit err
+
+	if err == nil {
+		return
+	}
+
+	fmt.Fprintln(os.Stderr, err)
+
+	switch {
+	case errors.Is(err, ErrEmptyFilepath) || errors.Is(err, os.ErrNotExist):
+		os.Exit(1)
+	case errors.Is(err, ErrMissingCmdFileArgument):
+		os.Exit(2)
+	default:
+		os.Exit(1)
+	}
 }
