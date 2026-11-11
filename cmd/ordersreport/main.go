@@ -356,9 +356,8 @@ func main() {
 
 	config := AppConfig{Filepath: filepath}
 
-	err := run(config) // возвращает ошибку и в main ее обрабатываем. В зависимости от ошибки вызываем интересующий нас exit err
-
-	if err == nil {
+	var err error
+	if err = run(config); err == nil {
 		return
 	}
 
